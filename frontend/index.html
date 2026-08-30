@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ThermaSight AI - SIH Thermal Anomaly Source Attribution System</title>
+    <meta name="description" content="SIH Thermal Anomaly Source Attribution Telemetry platform integrating NASA FIRMS VIIRS satellite data, OSM spatial proximity, and XGBoost machine learning models.">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        
+        <!-- TOP INTEGRATED NAVIGATION BAR -->
+        <header class="app-header">
+            <div class="header-left">
+                <button class="icon-btn" id="btnToggleSidebar" title="Toggle Sidebar (Ctrl+B)">
+                    <i data-lucide="panel-left"></i>
+                </button>
+                <div class="brand-logo">
+                    <i data-lucide="flame" class="logo-icon"></i>
+                </div>
+                <div class="brand-titles">
+                    <h1 class="brand-name">Therma<span class="highlight">Sight</span> <span class="brand-badge">AI</span></h1>
+                </div>
+                <div class="status-chip" id="systemStatusChip">
+                    <span class="chip-dot"></span>
+                    <span class="chip-text" id="statusText">Syncing...</span>
+                </div>
+            </div>
+
+            <!-- Header Middle Search & Quick Category Pills -->
+            <div class="header-center">
+                <div class="search-box">
+                    <i data-lucide="search" class="search-icon"></i>
+                    <input type="text" id="searchInput" placeholder="Search facility, event ID, region or land cover..." autocomplete="off">
+                    <button class="clear-btn hidden" id="clearSearchBtn"><i data-lucide="x"></i></button>
+                </div>
+
+                <div class="category-pills" id="classFilterGroup">
+                    <button class="pill-btn active" data-class="ALL">All</button>
+                    <button class="pill-btn pill-ind" data-class="INDUSTRIAL">Industrial</button>
+                    <button class="pill-btn pill-nat" data-class="NATURAL">Natural</button>
+                </div>
+            </div>
+
+            <!-- Header Right Stats Telemetry Summary & Actions -->
+            <div class="header-right">
+                <div class="header-telemetry-strip">
+                    <div class="telem-item" title="Total Detections">
+                        <span class="telem-val" id="statTotalEvents">--</span>
+                        <span class="telem-lbl">Events</span>
+                    </div>
+                    <div class="telem-divider"></div>
+                    <div class="telem-item" title="Industrial Flares">
+                        <span class="telem-val val-ind" id="statIndustrialCount">--</span>
+                        <span class="telem-lbl">Industrial</span>
+                    </div>
+                    <div class="telem-divider"></div>
+                    <div class="telem-item" title="Natural Fires">
+                        <span class="telem-val val-nat" id="statNaturalCount">--</span>
+                        <span class="telem-lbl">Natural</span>
+                    </div>
+                    <div class="telem-divider"></div>
+                    <div class="telem-item" title="Peak FRP Power">
+                        <span class="telem-val" id="statMaxFrp">--</span>
+                        <span class="telem-lbl">Peak MW</span>
+                    </div>
+                </div>
+
+                <div class="view-switcher" role="tablist">
+                    <button class="view-tab active" data-view="map" id="tabViewMap" title="Map View">
+                        <i data-lucide="map"></i>
+                    </button>
+                    <button class="view-tab" data-view="grid" id="tabViewGrid" title="Table View">
+                        <i data-lucide="table"></i>
+                    </button>
+                    <button class="view-tab" data-view="analytics" id="tabViewAnalytics" title="Analytics View">
+                        <i data-lucide="bar-chart-2"></i>
+                    </button>
+                </div>
+
+                <button class="btn btn-secondary btn-sm" id="btnSimulateModal" title="Simulate custom coordinates">
+                    <i data-lucide="plus"></i> Simulate
+                </button>
+                <button class="btn btn-primary btn-sm" id="btnExportData" title="Export to CSV">
+                    <i data-lucide="download"></i> Export
+                </button>
+            </div>
+        </header>
+
+        <!-- MAIN LAYOUT -->
+        <main class="main-content-layout">
+            
+            <!-- LEFT CONTROL SIDEBAR -->
+            <aside class="control-panel" id="controlPanel">
+                <div class="panel-header">
+                    <span class="panel-heading"><i data-lucide="sliders"></i> Filters & GIS Controls</span>
+                    <button class="btn-link" id="btnResetFilters">Reset</button>
+                </div>
+
+                <div class="panel-scroll-content">
+                    <!-- FRP Range Slider -->
+                    <div class="filter-card">
+                        <div class="card-label-row">
+                            <span class="card-label">Min Fire Power (FRP)</span>
+                            <span class="mono-val" id="frpSliderVal">0 MW</span>
+                        </div>
+                        <input type="range" id="frpSlider" min="0" max="100" step="5" value="0" class="custom-range">
+                        <div class="range-ticks">
+                            <span>0</span>
+                            <span>50 MW</span>
+                            <span>100+</span>
+                        </div>
+                    </div>
+
+                    <!-- AI Confidence Slider -->
+                    <div class="filter-card">
+                        <div class="card-label-row">
+                            <span class="card-label">Min AI Confidence</span>
+                            <span class="mono-val" id="confSliderVal">50%</span>
+                        </div>
+                        <input type="range" id="confSlider" min="0.5" max="0.99" step="0.05" value="0.50" class="custom-range">
+                        <div class="range-ticks">
+                            <span>50%</span>
+                            <span>75%</span>
+                            <span>99%</span>
+                        </div>
+                    </div>
+
+                    <!-- Proximity Filter -->
+                    <div class="filter-card">
+                        <label class="checkbox-row">
+                            <input type="checkbox" id="chkIndustrialOnly">
+                            <span class="checkbox-box"></span>
+                            <span class="checkbox-label">Industrial Proximity &lt; 1.0 km</span>
+                        </label>
+                    </div>
+
+                    <!-- Temporal Recurrence -->
+                    <div class="filter-card">
+                        <span class="card-label">Hotspot Recurrence</span>
+                        <select id="selectRecurrence" class="select-input">
+                            <option value="all">Any Recurrence</option>
+                            <option value="high">High (&ge; 10 in 30d)</option>
+                            <option value="transient">Transient (&lt; 5 in 30d)</option>
+                        </select>
+                    </div>
+
+                    <!-- GIS Basemap Selection -->
+                    <div class="filter-card">
+                        <span class="card-label">Basemap Cartography</span>
+                        <div class="basemap-grid">
+                            <button class="tile-btn active" data-tile="dark">
+                                <span class="tile-swatch swatch-dark"></span> Dark
+                            </button>
+                            <button class="tile-btn" data-tile="sat">
+                                <span class="tile-swatch swatch-sat"></span> Satellite
+                            </button>
+                            <button class="tile-btn" data-tile="street">
+                                <span class="tile-swatch swatch-street"></span> Street
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Layer Overlays -->
+                    <div class="filter-card">
+                        <span class="card-label">Map Overlays</span>
+                        <div class="toggle-stack">
+                            <label class="switch-row">
+                                <span class="switch-text">Industrial Hub Markers</span>
+                                <input type="checkbox" id="toggleIndustrialNodes" checked>
+                                <span class="switch-slider"></span>
+                            </label>
+                            <label class="switch-row">
+                                <span class="switch-text">Facility Buffer Rings (5km)</span>
+                                <input type="checkbox" id="toggleBufferRings" checked>
+                                <span class="switch-slider"></span>
+                            </label>
+                            <label class="switch-row">
+                                <span class="switch-text">Pulse Hotspot Animation</span>
+                                <input type="checkbox" id="toggleFrpPulse" checked>
+                                <span class="switch-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-footer">
+                    <span>Showing <strong id="filteredCount">0</strong> / <span id="totalCount">0</span> events</span>
+                </div>
+            </aside>
+
+            <!-- CENTER VIEWPORT -->
+            <section class="viewport-area">
+                
+                <!-- VIEW 1: MAP VIEWPORT -->
+                <div class="view-panel active" id="viewMapContainer">
+                    <div id="map" class="map-viewport"></div>
+
+                    <!-- Floating Map Telemetry & Legend Overlay -->
+                    <div class="map-hud-overlay">
+                        <div class="hud-coords" id="coordsDisplay">
+                            <i data-lucide="crosshair"></i>
+                            <span id="coordsText">20.5937° N, 78.9629° E</span>
+                        </div>
+                        <div class="hud-legend">
+                            <span class="legend-chip"><span class="dot dot-ind"></span> Industrial Flare</span>
+                            <span class="legend-chip"><span class="dot dot-nat"></span> Natural Fire</span>
+                            <span class="legend-chip"><i data-lucide="factory" class="icon-facility"></i> Facility Node</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW 2: TABLE VIEWPORT -->
+                <div class="view-panel" id="viewGridContainer">
+                    <div class="table-header-bar">
+                        <div class="table-title">
+                            <h3>Thermal Anomaly Inventory (<span id="gridEventCount">0</span>)</h3>
+                        </div>
+                        <span class="table-sub">Click any row to inspect AI model attribution telemetry</span>
+                    </div>
+                    <div class="table-scroll-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Event ID</th>
+                                    <th>Classification</th>
+                                    <th>Confidence</th>
+                                    <th>Coordinates</th>
+                                    <th>FRP (MW)</th>
+                                    <th>Nearest Facility</th>
+                                    <th>Distance</th>
+                                    <th>30d Hits</th>
+                                    <th>Land Cover</th>
+                                    <th>Acq Date</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- VIEW 3: ANALYTICS VIEWPORT -->
+                <div class="view-panel" id="viewAnalyticsContainer">
+                    <div class="analytics-wrapper">
+                        <div class="chart-card">
+                            <div class="chart-header">
+                                <h4>Attribution Distribution</h4>
+                                <span>Industrial vs Natural Sources</span>
+                            </div>
+                            <div class="chart-box"><canvas id="chartAttributionPie"></canvas></div>
+                        </div>
+
+                        <div class="chart-card">
+                            <div class="chart-header">
+                                <h4>FRP Intensity Profile</h4>
+                                <span>Fire Radiative Power Distribution (MW)</span>
+                            </div>
+                            <div class="chart-box"><canvas id="chartFrpHist"></canvas></div>
+                        </div>
+
+                        <div class="chart-card chart-card-wide">
+                            <div class="chart-header">
+                                <h4>Proximity vs Radiative Power Correlation</h4>
+                                <span>Distance to Nearest Facility (km) vs FRP Intensity (MW)</span>
+                            </div>
+                            <div class="chart-box"><canvas id="chartScatter"></canvas></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- RIGHT INSPECTOR PANEL -->
+            <aside class="inspector-panel" id="inspectorPanel">
+                <div class="inspector-header">
+                    <span class="inspector-heading"><i data-lucide="cpu"></i> AI Attribution Inspector</span>
+                    <button class="icon-btn" id="btnCloseInspector" title="Close Panel">
+                        <i data-lucide="x"></i>
+                    </button>
+                </div>
+
+                <!-- Empty State -->
+                <div class="inspector-empty" id="inspectorEmptyState">
+                    <div class="empty-icon"><i data-lucide="radar"></i></div>
+                    <h4>No Event Selected</h4>
+                    <p>Click on any map marker or table row to view model rationale, SHAP feature weights, and satellite observations.</p>
+                </div>
+
+                <!-- Content Panel -->
+                <div class="inspector-scroll-content hidden" id="inspectorContent">
+                    
+                    <!-- Verdict Header Card -->
+                    <div class="verdict-card" id="verdictBanner">
+                        <div class="verdict-header">
+                            <span class="verdict-badge" id="verdictClassTag">INDUSTRIAL</span>
+                            <span class="verdict-id" id="verdictEventId">FIRMS-IND-2025-001</span>
+                        </div>
+
+                        <div class="verdict-score-block">
+                            <div class="score-progress-bar">
+                                <div class="score-fill" id="verdictProgressFill"></div>
+                            </div>
+                            <div class="score-meta">
+                                <span class="score-num" id="verdictProbText">94% Certainty</span>
+                                <span class="score-label" id="verdictProbLabel">XGBoost v1 Prototype</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SHAP Feature Importance -->
+                    <div class="inspector-block">
+                        <h4 class="block-title"><i data-lucide="bar-chart-2"></i> SHAP Feature Attribution</h4>
+                        <div class="shap-stack">
+                            <div class="shap-row">
+                                <div class="shap-info">
+                                    <span>Industrial Proximity (&lt; 300m)</span>
+                                    <strong class="mono-val">38%</strong>
+                                </div>
+                                <div class="shap-track"><div class="shap-fill fill-orange" style="width: 76%;"></div></div>
+                            </div>
+                            <div class="shap-row">
+                                <div class="shap-info">
+                                    <span>30-Day Recurrence Persistence</span>
+                                    <strong class="mono-val">32%</strong>
+                                </div>
+                                <div class="shap-track"><div class="shap-fill fill-amber" style="width: 64%;"></div></div>
+                            </div>
+                            <div class="shap-row">
+                                <div class="shap-info">
+                                    <span>FRP Radiative Intensity</span>
+                                    <strong class="mono-val">18%</strong>
+                                </div>
+                                <div class="shap-track"><div class="shap-fill fill-red" style="width: 36%;"></div></div>
+                            </div>
+                            <div class="shap-row">
+                                <div class="shap-info">
+                                    <span>Land Cover Profile</span>
+                                    <strong class="mono-val">12%</strong>
+                                </div>
+                                <div class="shap-track"><div class="shap-fill fill-teal" style="width: 24%;"></div></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- AI Evidence Cards -->
+                    <div class="inspector-block">
+                        <h4 class="block-title"><i data-lucide="shield-check"></i> Decision Evidence Rationale</h4>
+                        <ul class="evidence-stack" id="evidenceList"></ul>
+                    </div>
+
+                    <!-- Spatial & Recurrence Specs -->
+                    <div class="inspector-block">
+                        <h4 class="block-title"><i data-lucide="map-pin"></i> Spatial Proximity Context</h4>
+                        <div class="specs-grid">
+                            <div class="spec-box">
+                                <span class="spec-lbl">Nearest Facility</span>
+                                <strong class="spec-val highlight-cyan" id="detFacility">--</strong>
+                            </div>
+                            <div class="spec-box">
+                                <span class="spec-lbl">Distance</span>
+                                <strong class="spec-val" id="detDistance">--</strong>
+                            </div>
+                            <div class="spec-box">
+                                <span class="spec-lbl">Land Cover</span>
+                                <strong class="spec-val" id="detLandCover">--</strong>
+                            </div>
+                            <div class="spec-box">
+                                <span class="spec-lbl">30d Recurrence</span>
+                                <strong class="spec-val" id="det30dCount">--</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Satellite Specs -->
+                    <div class="inspector-block">
+                        <h4 class="block-title"><i data-lucide="satellite"></i> NASA VIIRS Satellite Data</h4>
+                        <div class="kv-table">
+                            <div class="kv-row"><span>Coordinates</span><strong id="detCoordinates">--</strong></div>
+                            <div class="kv-row"><span>FRP Intensity</span><strong id="detFrp">--</strong></div>
+                            <div class="kv-row"><span>Brightness Temp (BT4)</span><strong id="detBt">--</strong></div>
+                            <div class="kv-row"><span>Acquisition Time</span><strong id="detAcqTime">--</strong></div>
+                            <div class="kv-row"><span>Platform & Orbit</span><strong id="detSatOrbit">--</strong></div>
+                            <div class="kv-row"><span>Quality Score</span><strong id="detConfidence">--</strong></div>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="inspector-actions">
+                        <button class="btn btn-secondary btn-full btn-sm" id="btnZoomToMap">
+                            <i data-lucide="maximize-2"></i> Center Anomaly on Map
+                        </button>
+                        <button class="btn btn-outline btn-full btn-sm" id="btnCopyGeoJson">
+                            <i data-lucide="copy"></i> Copy Feature GeoJSON
+                        </button>
+                    </div>
+
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- SIMULATION MODAL -->
+    <div class="modal-backdrop hidden" id="simulateModal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3><i data-lucide="sparkles"></i> Simulate Custom Thermal Event</h3>
+                <button class="modal-close" id="btnCloseSimModal"><i data-lucide="x"></i></button>
+            </div>
+            
+            <form id="simForm">
+                <div class="modal-body">
+                    <p class="modal-sub">Specify custom observation coordinates. ThermaSight AI will match nearby industrial nodes, calculate recurrence, and output instant source attribution.</p>
+
+                    <div class="form-grid">
+                        <div class="field">
+                            <label for="simLat">Latitude (°N)</label>
+                            <input type="number" step="0.0001" id="simLat" value="22.3072" required>
+                        </div>
+                        <div class="field">
+                            <label for="simLon">Longitude (°E)</label>
+                            <input type="number" step="0.0001" id="simLon" value="73.1812" required>
+                        </div>
+                        <div class="field">
+                            <label for="simFrp">FRP (MW)</label>
+                            <input type="number" step="0.1" id="simFrp" value="45.0" required>
+                        </div>
+                        <div class="field">
+                            <label for="simBt">Brightness Temp (K)</label>
+                            <input type="number" step="0.1" id="simBt" value="350.0" required>
+                        </div>
+                        <div class="field">
+                            <label for="simLandCover">Land Cover Type</label>
+                            <select id="simLandCover" class="select-input">
+                                <option value="Built-up / Industrial">Built-up / Industrial Zone</option>
+                                <option value="Tree cover / Forest">Tree cover / Forest</option>
+                                <option value="Cropland">Cropland / Agricultural</option>
+                                <option value="Grassland / Shrubland">Grassland / Shrubland</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="simSatellite">Satellite Sensor</label>
+                            <select id="simSatellite" class="select-input">
+                                <option value="VIIRS_SNPP">VIIRS SNPP</option>
+                                <option value="VIIRS_NOAA20">VIIRS NOAA-20</option>
+                                <option value="MODIS_AQUA">MODIS Aqua</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" id="btnCancelSim">Cancel</button>
+                    <button type="submit" class="btn btn-primary btn-sm"><i data-lucide="cpu"></i> Run Attribution Model</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-stack" id="toastContainer"></div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

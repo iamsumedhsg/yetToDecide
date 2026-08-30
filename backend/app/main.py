@@ -12,6 +12,8 @@ for path in (str(PROJECT_ROOT), str(BACKEND_DIR), str(BASE_DIR)):
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from .routes.health import router as health_router
 from .routes.events import router as events_router
 from .config import settings
@@ -35,8 +37,18 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(events_router)
 
+# Serve Frontend static assets and index.html
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
+if (FRONTEND_DIR / "css").exists():
+    app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
+if (FRONTEND_DIR / "js").exists():
+    app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
+
 @app.get("/")
 def root():
+    index_path = FRONTEND_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
     return {
         "message": "Welcome to SIH Thermal Anomaly Attribution API",
         "docs": "/docs",
@@ -45,3 +57,4 @@ def root():
         "stats": "/events/stats",
         "geojson": "/events/geojson"
     }
+
